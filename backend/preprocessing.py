@@ -1,56 +1,40 @@
-import cv2
 import numpy as np
-from PIL import Image
+import cv2
+from PIL import Image, ImageOps
 import io
-
-def calculate_snr(img_array):
-    """
-    Calculate PSNR/SNR of the image.
-    Using peak signal-to-noise ratio (PSNR) as a proxy for 'noise' check.
-    If PSNR is low, image is noisy.
-    """
-    blurred = cv2.GaussianBlur(img_array, (5, 5), 0)
-    mse = np.mean((img_array - blurred) ** 2)
-    if mse == 0:
-        return 100
-    PIXEL_MAX = 255.0
-    psnr = 20 * np.log10(PIXEL_MAX / np.sqrt(mse))
-    return psnr
 
 def preprocess_image(image_bytes: bytes):
     """
-    1. Check noise
-    2. Gaussian filtering if noisy
-    3. Resize to 224x224
-    4. Normalize to [-1, 1] (CRITICAL)
+    Preprocess image for Teachable Machine model (Keras).
+    Logic matches the user's provided snippet:
+    1. Load image with PIL
+    2. Convert to RGB
+    3. ImageOps.fit (Resize & Center Crop) to 224x224
+    4. Normalize ((img / 127.5) - 1)
     """
-    # Load image as RGB
+    # 1. Load image from bytes
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img_array = np.array(image)
 
-    # 1. Noise Check
-    psnr = calculate_snr(img_array)
-    is_noisy = psnr < 30.0
+    # 2. Resize & Crop (Teachable Machine standard)
+    size = (224, 224)
+    image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
 
-    processed_img = img_array.copy()
+    # 3. Convert to Numpy Array
+    image_array = np.asarray(image)
 
-    # 2. Conditional Gaussian Filtering
-    if is_noisy:
-        print(f"Image is noisy (PSNR: {psnr:.2f}dB). Applying Gaussian filter.")
-        processed_img = cv2.GaussianBlur(processed_img, (5, 5), 0)
-    else:
-        print(f"Image is clean (PSNR: {psnr:.2f}dB). Skipping filtering.")
+    # 4. Normalize
+    # (image_array.astype(np.float32) / 127.5) - 1
+    normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1.0
 
-    # 3. Resize to 224x224
-    processed_img_resized = cv2.resize(processed_img, (224, 224))
+    # 5. Create Batch (1, 224, 224, 3)
+    batch_img = np.expand_dims(normalized_image_array, axis=0)
 
-    # 4. Normalization for MobileNetV3: [-1, 1]
-    # img_array / 127.5 - 1.0
-    normalized_img = processed_img_resized.astype("float32")
-    normalized_img = normalized_img / 127.5 - 1.0
+    # Return:
+    # - batch_img: for model
+    # - image_array_bgr: for OpenCV visualization/saving (converted from RGB)
+    # - is_noisy: Dummy flag (not checking noise anymore)
     
-    # Expand dims for batch: (1, 224, 224, 3)
-    batch_img = np.expand_dims(normalized_img, axis=0)
-
-    # Return batch (normalized) and display image (RGB, original size or resized? use resized for consistency)
-    return batch_img, processed_img_resized, is_noisy
+    # Convert RGB PIL array to BGR for OpenCV compatibility in other parts of the app
+    image_array_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+    
+    return batch_img, image_array_bgr, False
